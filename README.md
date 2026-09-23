@@ -40,13 +40,27 @@ Please note, that video loads only if you are logged in your GitHub account.
   - 1G+ RAM;
   - A modern CPU with AVX, AVX2, AVX-512 or AMX instruction sets.
 
-  Dependencies:
+  Required:
   
-  - `torch>=1.12.0`;
-  - `torchaudio>=0.12.0` (for I/O only);
-  - `onnxruntime>=1.16.1` (for ONNX model usage).
+  - `torch>=1.12.0`.
   
-  Silero VAD uses torchaudio library for audio I/O (`torchaudio.info`, `torchaudio.load`, and `torchaudio.save`), so a proper audio backend is required:
+  Everything else is optional and installed via extras:
+  
+  | Extra | Installs | Needed for |
+  |---|---|---|
+  | `silero-vad[audio]` | `torchaudio>=0.12.0,<2.10`, plus `torchcodec` on Python 3.9+ | `read_audio` / `save_audio` |
+  | `silero-vad[codec]` | `torchcodec` | `read_audio` / `save_audio` with no torchaudio at all |
+  | `silero-vad[onnx-cpu]` | `onnxruntime>=1.16.1`, `numpy` | ONNX and sequence models |
+  | `silero-vad[onnx-gpu]` | `onnxruntime-gpu>=1.16.1`, `numpy` | ONNX on GPU |
+  | `silero-vad[all]` | all of the above | everything |
+  
+  `[audio]` pulls in torchcodec on Python 3.9+ because `torchaudio>=2.9` hands decoding over to it and does not work without it; on Python 3.8 pip resolves an older torchaudio that decodes on its own. torchcodec itself needs FFmpeg (4-9) on the system.
+  
+  The model itself needs only `torch` — if you already load audio yourself, pass a 1-D float32 `torch.Tensor` straight to `get_speech_timestamps` and install nothing extra.
+  
+  The bundled I/O helpers (`read_audio`, `save_audio`) work with **either** backend: torchaudio if present, otherwise torchcodec. Note that torchcodec resamples through FFmpeg rather than `torchaudio.transforms.Resample`, so results can differ by ~1e-3 on files that need resampling.
+  
+  With torchaudio, a proper audio backend is required:
   
   - Option №1 - [**FFmpeg**](https://www.ffmpeg.org/) backend. `conda install -c conda-forge 'ffmpeg<7'`;
   - Option №2 - [**sox_io**](https://pypi.org/project/sox/) backend. `apt-get install sox`, TorchAudio is tested on libsox 14.4.2;
@@ -60,7 +74,7 @@ If you are planning to run the VAD using solely the `onnx-runtime`, it will run 
 </details>
 
 **Using pip**:
-`pip install silero-vad`
+`pip install silero-vad[audio]` (or plain `pip install silero-vad` if you load audio yourself)
 
 ```python3
 from silero_vad import load_silero_vad, read_audio, get_speech_timestamps

@@ -1,10 +1,62 @@
 import torch
-import torchaudio
 from typing import Callable, List
 import warnings
 from packaging import version
 
 languages = ['ru', 'en', 'de', 'es']
+
+_NO_AUDIO_BACKEND_MSG = (
+    "Audio I/O (read_audio / save_audio) requires either torchaudio or torchcodec, "
+    "but neither is installed.\n"
+    "Install one of them:\n"
+    "    pip install silero-vad[audio]   # torchaudio\n"
+    "    pip install silero-vad[codec]   # torchcodec\n"
+    "or install everything with:\n"
+    "    pip install silero-vad[all]\n"
+    "Note: the VAD model itself needs neither of them. You can load audio with any "
+    "library and pass a 1-D float32 torch.Tensor to get_speech_timestamps."
+)
+
+
+def _try_import_torchaudio():
+    """Return the torchaudio module, or None if it is not installed.
+
+    torchaudio is only used by the audio I/O helpers, never by the model itself,
+    so it is an optional dependency and its absence is not an error here.
+    """
+    try:
+        import torchaudio
+    except ImportError:
+        return None
+    return torchaudio
+
+
+def _decode_with_torchcodec(path: str, sampling_rate: int = None):
+    """Decode an audio file with torchcodec, optionally resampling it.
+
+    Returns a (waveform, sampling_rate) pair, where waveform is a 2-D
+    (channels, samples) float32 tensor. When sampling_rate is None the native
+    rate of the file is kept. Channels are left untouched: FFmpeg's own
+    down-mixing (num_channels=1) does not match the plain channel average used
+    elsewhere in this module, so callers do the mixing themselves.
+    """
+    try:
+        from torchcodec.decoders import AudioDecoder
+    except ImportError:
+        raise ImportError(_NO_AUDIO_BACKEND_MSG) from None
+
+    samples = AudioDecoder(path, sample_rate=sampling_rate).get_all_samples()
+    return samples.data, samples.sample_rate
+
+
+def _encode_with_torchcodec(path: str, tensor: torch.Tensor, sampling_rate: int):
+    """Write a 2-D (channels, samples) float tensor with torchcodec."""
+    try:
+        from torchcodec.encoders import AudioEncoder
+    except ImportError:
+        raise ImportError(_NO_AUDIO_BACKEND_MSG) from None
+
+    AudioEncoder(tensor, sample_rate=sampling_rate).to_file(path)
 
 
 class OnnxWrapper():
@@ -135,28 +187,41 @@ class Validator():
         return outs
 
 
-def read_audio(path: str, sampling_rate: int = 16000) -> torch.Tensor:
+def _decode_with_torchaudio(path: str, sampling_rate: int, torchaudio):
+    """Decode an audio file with torchaudio, returning (waveform, sample_rate).
+
+    The waveform keeps its native rate and channels; the caller down-mixes and
+    resamples it. torchaudio >= 2.9 hands decoding over to torchcodec, so its
+    loader is allowed to fail and fall through to torchcodec directly.
+    """
     ta_ver = version.parse(torchaudio.__version__)
+
     if ta_ver < version.parse("2.9"):
         try:
             effects = [['channels', '1'],['rate', str(sampling_rate)]]
-            wav, sr = torchaudio.sox_effects.apply_effects_file(path, effects=effects)
+            return torchaudio.sox_effects.apply_effects_file(path, effects=effects)
         except:
-            wav, sr = torchaudio.load(path)
-    else:
+            return torchaudio.load(path)
+
+    try:
+        return torchaudio.load(path)
+    except:
         try:
-            wav, sr = torchaudio.load(path)
-        except:
-            try:
-                from torchcodec.decoders import AudioDecoder
-                samples = AudioDecoder(path).get_all_samples()
-                wav = samples.data
-                sr = samples.sample_rate
-            except ImportError:
-                raise RuntimeError(
-                    f"torchaudio version {torchaudio.__version__} requires torchcodec for audio I/O. "
-                    + "Install torchcodec or pin torchaudio < 2.9"
-                )
+            return _decode_with_torchcodec(path)
+        except ImportError:
+            raise RuntimeError(
+                f"torchaudio version {torchaudio.__version__} requires torchcodec for audio I/O. "
+                + "Install torchcodec or pin torchaudio < 2.9"
+            ) from None
+
+
+def read_audio(path: str, sampling_rate: int = 16000) -> torch.Tensor:
+    torchaudio = _try_import_torchaudio()
+
+    if torchaudio is None:
+        wav, sr = _decode_with_torchcodec(path, sampling_rate)
+    else:
+        wav, sr = _decode_with_torchaudio(path, sampling_rate, torchaudio)
 
     if wav.ndim > 1 and wav.size(0) > 1:
         wav = wav.mean(dim=0, keepdim=True)
@@ -172,6 +237,12 @@ def save_audio(path: str, tensor: torch.Tensor, sampling_rate: int = 16000):
     if tensor.ndim == 1:
         tensor = tensor.unsqueeze(0)
 
+    torchaudio = _try_import_torchaudio()
+
+    if torchaudio is None:
+        _encode_with_torchcodec(path, tensor, sampling_rate)
+        return
+
     ta_ver = version.parse(torchaudio.__version__)
 
     try:
@@ -179,14 +250,12 @@ def save_audio(path: str, tensor: torch.Tensor, sampling_rate: int = 16000):
     except Exception:
         if ta_ver >= version.parse("2.9"):
             try:
-                from torchcodec.encoders import AudioEncoder
-                encoder = AudioEncoder(tensor, sample_rate=sampling_rate)
-                encoder.to_file(path)
+                _encode_with_torchcodec(path, tensor, sampling_rate)
             except ImportError:
                 raise RuntimeError(
                     f"torchaudio version {torchaudio.__version__} requires torchcodec for saving. "
                     + "Install torchcodec or pin torchaudio < 2.9"
-                )
+                ) from None
         else:
             raise
 

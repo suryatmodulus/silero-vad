@@ -18,7 +18,6 @@ imported and used on worker threads without pulling in torch.
 """
 
 import numpy as np
-import onnxruntime as ort
 
 from .utils_vad import get_speech_timestamps_from_probs
 
@@ -100,6 +99,8 @@ class SileroVADSequence:
             raise ValueError(
                 f"Unsupported sampling_rate {sampling_rate}; supported: {sorted(RATE_CONFIG)}"
             )
+        import onnxruntime as ort
+
         options = ort.SessionOptions()
         options.inter_op_num_threads = 1
         options.intra_op_num_threads = 1
