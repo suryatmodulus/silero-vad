@@ -30,7 +30,6 @@ classifiers = [
 dependencies = [
   "packaging",
   "torch>=1.12.0",
-  "torchaudio>=0.12.0,<2.10",
 ]
 
 [project.urls]
@@ -38,13 +37,26 @@ Homepage = "https://github.com/snakers4/silero-vad"
 Issues = "https://github.com/snakers4/silero-vad/issues"
 
 [project.optional-dependencies]
+audio = [
+    "torchaudio>=0.12.0,<2.10",
+]
+codec = [
+    "torchcodec",
+]
 onnx-cpu = [
     "onnxruntime>=1.16.1",
+    "numpy",
 ]
 onnx-gpu = [
     "onnxruntime-gpu>=1.16.1",
+    "numpy",
+]
+all = [
+    "silero-vad[audio,codec,onnx-cpu]",
+    "numpy",
 ]
 test = [
+    "silero-vad[audio]",
     "pytest",
     "soundfile",
     "torch<2.9",
