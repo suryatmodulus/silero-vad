@@ -48,11 +48,13 @@ Please note, that video loads only if you are logged in your GitHub account.
   
   | Extra | Installs | Needed for |
   |---|---|---|
-  | `silero-vad[audio]` | `torchaudio>=0.12.0,<2.10` | `read_audio` / `save_audio` |
-  | `silero-vad[codec]` | `torchcodec` | `read_audio` / `save_audio` without torchaudio; also required by `torchaudio>=2.9` |
-  | `silero-vad[onnx-cpu]` | `onnxruntime>=1.16.1` | ONNX and sequence models |
-  | `silero-vad[onnx-gpu]` | `onnxruntime-gpu>=1.16.1` | ONNX on GPU |
-  | `silero-vad[all]` | all of the above plus `numpy` | everything |
+  | `silero-vad[audio]` | `torchaudio>=0.12.0,<2.10`, plus `torchcodec` on Python 3.9+ | `read_audio` / `save_audio` |
+  | `silero-vad[codec]` | `torchcodec` | `read_audio` / `save_audio` with no torchaudio at all |
+  | `silero-vad[onnx-cpu]` | `onnxruntime>=1.16.1`, `numpy` | ONNX and sequence models |
+  | `silero-vad[onnx-gpu]` | `onnxruntime-gpu>=1.16.1`, `numpy` | ONNX on GPU |
+  | `silero-vad[all]` | all of the above | everything |
+  
+  `[audio]` pulls in torchcodec on Python 3.9+ because `torchaudio>=2.9` hands decoding over to it and does not work without it; on Python 3.8 pip resolves an older torchaudio that decodes on its own. torchcodec itself needs FFmpeg (4-9) on the system.
   
   The model itself needs only `torch` — if you already load audio yourself, pass a 1-D float32 `torch.Tensor` straight to `get_speech_timestamps` and install nothing extra.
   

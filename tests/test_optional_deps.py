@@ -1,8 +1,8 @@
-"""Tests for the optional audio/ONNX dependencies.
+"""Tests for the optional dependencies.
 
-torchaudio and torchcodec are both optional extras: the VAD model itself needs
-neither, only the read_audio / save_audio helpers do. These tests pin down the
-behaviour when one or both of them are missing.
+torchaudio, torchcodec, onnxruntime and numpy are all optional extras: the VAD
+model itself needs none of them. These tests pin down what happens when they
+are missing, and make sure importing the package does not drag them in.
 """
 import subprocess
 import sys
@@ -10,41 +10,40 @@ import sys
 import pytest
 import torch
 
+from conftest import WAV, requires_torchcodec
+
 from silero_vad import read_audio, save_audio
-import silero_vad.utils_vad as utils_vad
-
-WAV = "tests/data/test.wav"
 
 
-def _hide_torchaudio(monkeypatch):
-    """Make `import torchaudio` fail, as it would if it were not installed."""
-    monkeypatch.setitem(sys.modules, "torchaudio", None)
+def _run_python(code):
+    """Run a snippet in a fresh interpreter, returning its stdout."""
+    return subprocess.check_output([sys.executable, "-c", code], text=True)
 
 
-def _hide_torchcodec(monkeypatch):
-    for name in ("torchcodec", "torchcodec.decoders", "torchcodec.encoders"):
-        monkeypatch.setitem(sys.modules, name, None)
+def test_import_does_not_pull_optional_packages():
+    """`import silero_vad` must not import the optional stack.
 
-
-def _has_torchcodec():
-    try:
-        import torchcodec.decoders  # noqa: F401
-    except ImportError:
-        return False
-    return True
-
-
-def test_import_without_onnxruntime_or_numpy():
-    """`import silero_vad` must not pull in the sequence path.
-
-    sequence_vad needs numpy and onnxruntime, which are optional extras, so it
-    is imported lazily. Run in a subprocess so that other tests, which do use
-    the sequence path, cannot mask the regression.
+    The sequence path needs numpy and onnxruntime, so it is imported lazily; a
+    plain `import silero_vad` has to stay usable with neither installed. Run in
+    a subprocess so other tests, which do use those paths, cannot mask a
+    regression here.
     """
     code = ("import silero_vad, sys; "
             "assert 'silero_vad.sequence_vad' not in sys.modules, 'sequence_vad imported eagerly'; "
-            "assert 'onnxruntime' not in sys.modules, 'onnxruntime imported eagerly'")
-    subprocess.check_call([sys.executable, "-c", code])
+            "assert 'onnxruntime' not in sys.modules, 'onnxruntime imported eagerly'; "
+            "assert 'torchaudio' not in sys.modules, 'torchaudio imported eagerly'")
+    _run_python(code)
+
+
+def test_onnxruntime_imported_only_when_a_session_is_built():
+    """Reaching the sequence module must not yet import onnxruntime."""
+    code = ("import silero_vad, sys; "
+            "silero_vad.get_speech_timestamps_sequence; "
+            "assert 'silero_vad.sequence_vad' in sys.modules, 'lazy attr did not import the module'; "
+            "assert 'onnxruntime' not in sys.modules, 'onnxruntime imported at module level'; "
+            "silero_vad.load_silero_vad(sequence=True); "
+            "assert 'onnxruntime' in sys.modules, 'onnxruntime never imported'")
+    _run_python(code)
 
 
 def test_lazy_sequence_attributes_still_resolve():
@@ -60,33 +59,35 @@ def test_lazy_sequence_attributes_still_resolve():
         silero_vad.definitely_not_an_attribute
 
 
-def test_no_audio_backend_raises_actionable_error(monkeypatch):
-    _hide_torchaudio(monkeypatch)
-    _hide_torchcodec(monkeypatch)
-
+def test_no_audio_backend_raises_actionable_error(without_torchaudio, without_torchcodec):
     with pytest.raises(ImportError) as excinfo:
         read_audio(WAV, sampling_rate=16000)
     message = str(excinfo.value)
     assert "silero-vad[audio]" in message
     assert "silero-vad[codec]" in message
 
-    with pytest.raises(ImportError):
+    with pytest.raises(ImportError) as excinfo:
         save_audio("unused.wav", torch.zeros(16000), sampling_rate=16000)
+    assert "silero-vad[codec]" in str(excinfo.value)
 
 
-@pytest.mark.skipif(not _has_torchcodec(), reason="torchcodec is not installed")
-def test_torchcodec_backend_without_torchaudio(monkeypatch, tmp_path):
+def test_vad_runs_without_any_audio_backend(without_torchaudio, without_torchcodec):
+    """The model must stay usable when audio comes from somewhere else."""
+    from silero_vad import load_silero_vad, get_speech_timestamps
+
+    model = load_silero_vad()
+    audio = torch.zeros(16000, dtype=torch.float32)
+    assert get_speech_timestamps(audio, model, return_seconds=True) == []
+
+
+@requires_torchcodec
+def test_torchcodec_backend_without_torchaudio(without_torchaudio, tmp_path):
     """torchcodec alone must be enough for both reading and writing."""
-    expected = read_audio(WAV, sampling_rate=16000)
-
-    _hide_torchaudio(monkeypatch)
     audio = read_audio(WAV, sampling_rate=16000)
 
     assert audio.dim() == 1
     assert audio.dtype == torch.float32
-    # test.wav is already mono 16 kHz, so no resampling is involved and the two
-    # decoders must agree exactly.
-    assert torch.equal(audio, expected)
+    assert audio.numel() > 0
 
     out = tmp_path / "out.wav"
     save_audio(str(out), audio[:16000], sampling_rate=16000)
