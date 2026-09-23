@@ -40,10 +40,6 @@ jobs:
     - name: Run tests
       run: pytest tests
 
-  # The torchcodec audio backend cannot be covered by the matrix above: it needs
-  # Python >= 3.9, FFmpeg on the system, and a torch release matching its own,
-  # while the `test` extra pins torch < 2.9. Exercise it once on a current stack
-  # so the torchaudio-less I/O path does not go untested.
   test-codec:
     runs-on: ubuntu-latest
 
@@ -63,8 +59,9 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
+        pip install "torchaudio>=0.12.0,<2.10" "torchcodec==0.9.*" --index-url https://download.pytorch.org/whl/cpu
         pip install pytest soundfile
-        pip install .[audio,codec,onnx-cpu]
+        pip install .[onnx-cpu]
 
     - name: Report backend versions
       run: |
